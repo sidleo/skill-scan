@@ -325,21 +325,6 @@ export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG
         json(res, { cwd: lastCwd, roots, skills: all })
       },
     })
-    webServer.register({
-      kind: 'exact',
-      path: '/api/skill-scan/roots',
-      handler: async (_req, res) => { const roots = await computeRoots(lastCwd); json(res, { cwd: lastCwd, roots }) },
-    })
-    webServer.register({
-      kind: 'exact',
-      path: '/api/skill-scan/discover',
-      handler: async (_req, res) => {
-        const roots = await computeRoots(lastCwd)
-        const all = []
-        for (const r of roots) for (const s of await listRoot(r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
-        json(res, { cwd: lastCwd, roots, skills: all })
-      },
-    })
   }
 
   void unregister
