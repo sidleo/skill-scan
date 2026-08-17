@@ -11,6 +11,7 @@
  */
 
 import { dirname, join } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { parseDocument } from 'yaml'
 import type { SkillProvider, SkillProviderControl } from '@deepseek-ai/dsh-skill'
 
@@ -95,6 +96,47 @@ export function normalizeConfig(input: unknown): SkillScanConfig {
   }
 }
 
+/**
+ * Config-file name stored under the DSH home (e.g. ~/.dsh/dsh-skill-scan.json).
+ */
+const CONFIG_FILE = 'dsh-skill-scan.json'
+
+/** Absolute path of the persisted config file, or undefined when no home is reachable. */
+function configFilePath(): string | undefined {
+  try {
+    const home = process.env.DSH_HOME?.trim() || process.env.HOME
+    if (!home) return undefined
+    return join(home, '.dsh', CONFIG_FILE)
+  } catch {
+    return undefined
+  }
+}
+
+/** Load persisted config from disk; falls back to `fallback` when absent or invalid. */
+export function loadConfig(fallback: SkillScanConfig = DEFAULT_CONFIG): SkillScanConfig {
+  const file = configFilePath()
+  if (file === undefined) return fallback
+  try {
+    const raw = readFileSync(file, 'utf8')
+    const parsed = JSON.parse(raw)
+    return normalizeConfig(parsed)
+  } catch {
+    return fallback
+  }
+}
+
+/** Persist config to disk; failures are intentionally non-fatal (in-memory still applies). */
+export function persistConfig(config: SkillScanConfig): void {
+  const file = configFilePath()
+  if (file === undefined) return
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify(config, null, 2) + '\n', { encoding: 'utf8' })
+  } catch {
+    // persistence is best-effort — the running process keeps the live config
+  }
+}
+
 export const name = 'skill-scan'
 export const inject = ['skills', 'webServer']
 
@@ -106,7 +148,7 @@ export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG
   const fs = ctx.get('fs')
   if (skills === undefined) return
 
-  let cfg = normalizeConfig(config)
+  let cfg = loadConfig(normalizeConfig(config))
   let control: SkillProviderControl | undefined
   let lastCwd: string | undefined
 
@@ -304,6 +346,7 @@ export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG
           } catch (error) {
             return jsonError(res, error instanceof Error ? error.message : String(error))
           }
+          persistConfig(cfg)
           control?.invalidate()
           return json(res, { ok: true, config: JSON.parse(JSON.stringify(cfg)) })
         }
