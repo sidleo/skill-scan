@@ -96,10 +96,23 @@ export function apply(ctx) {
     function save(next) {
       setError('')
       setConfig(next)
-      setSaved(true)
-      // The current host exposes GET config only; editing persistence is a
-      // future host addition. This keeps the card interactive and safe.
-      fetch('/api/skill-scan/config').then(function () {}).catch(function () {})
+      setSaved(false)
+      fetch('/api/skill-scan/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next),
+      }).then(function (r) { return r.json() })
+        .then(function (result) {
+          if (result && result.ok) {
+            setConfig(result.config)
+            setSaved(true)
+            // Refresh the scan-root preview after config applied.
+            return fetch('/api/skill-scan/roots').then(function (r) { return r.json() })
+          }
+          throw new Error((result && result.error) || 'save failed')
+        })
+        .then(function (res) { if (res) setPreview(res) })
+        .catch(function (err) { setError(String(err && err.message ? err.message : err)) })
     }
 
     if (config === null) {

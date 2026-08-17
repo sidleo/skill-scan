@@ -26,6 +26,22 @@ export interface JsonRes {
   end(body?: string): void
 }
 
+/** Minimal Node writable stream (an HTTP request body). */
+export interface NodeReadable {
+  on(event: 'data', cb: (chunk: Buffer) => void): NodeReadable
+  on(event: 'end', cb: () => void): NodeReadable
+}
+
+/** Collect an HTTP request body as a UTF-8 string. */
+export async function readBodyLight(req: NodeReadable): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+    req.on('end', () => { resolve(Buffer.concat(chunks).toString('utf8')) })
+    // no error handler needed for a request body; malformed body → empty/partial
+  })
+}
+
 export interface ParentDir {
   /** Directory name (e.g. ".dsh") under which "<base>/<name>/skills" is scanned. */
   readonly name: string
@@ -268,10 +284,46 @@ export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify(body))
     }
+    const jsonError = (res: JsonRes, message: string): void => {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: message }))
+    }
     webServer.register({
       kind: 'exact',
       path: '/api/skill-scan/config',
-      handler: (_req, res) => json(res, JSON.parse(JSON.stringify(cfg))),
+      handler: async (req, res) => {
+        if (req?.method === 'POST') {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(await readBodyLight(req as NodeReadable))
+          } catch {
+            return jsonError(res, 'invalid JSON body')
+          }
+          try {
+            cfg = normalizeConfig(parsed)
+          } catch (error) {
+            return jsonError(res, error instanceof Error ? error.message : String(error))
+          }
+          control?.invalidate()
+          return json(res, { ok: true, config: JSON.parse(JSON.stringify(cfg)) })
+        }
+        json(res, JSON.parse(JSON.stringify(cfg)))
+      },
+    })
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-scan/roots',
+      handler: async (_req, res) => { const roots = await computeRoots(lastCwd); json(res, { cwd: lastCwd, roots }) },
+    })
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-scan/discover',
+      handler: async (_req, res) => {
+        const roots = await computeRoots(lastCwd)
+        const all = []
+        for (const r of roots) for (const s of await listRoot(r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
+        json(res, { cwd: lastCwd, roots, skills: all })
+      },
     })
     webServer.register({
       kind: 'exact',
