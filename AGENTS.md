@@ -70,16 +70,14 @@ dsh plugin --profile web add link:/Users/zhang3/yh_zhang3/Project/dsh插件/skil
 
 `ScanContext` 是最小接口（`get(): unknown`），`skills.registerProvider` 等调用点类型不全——**tsdown 构建不受影响**。改这些位置时保持现状即可，不要为类型告警做大规模改造。
 
-## npm 发布（待办，当前不可用）
-
-**现状**：本机未登录 npm（`npm whoami` → `ENEEDAUTH`），`@sidleo3/skill-scan` 尚未发布。用户注册 npm 并 `npm login` 前不要尝试 publish。
-
-发布步骤（登录后）：
+## npm 发布
 
 ```bash
-pnpm install && pnpm build
 npm publish    # prepack 自动 pnpm build
 npm view @sidleo3/skill-scan   # 验证
 ```
 
-注意：`@sidleo` scope 必须是 npm 已注册用户名或 org；发布后在线安装命令为 `dsh plugin --profile <p> add @sidleo3/skill-scan`。
+发布要求：
+- npm 登录身份 `sidleo3`（scope 匹配用户名）
+- ~/.npmrc 需配置 auth token（Granular Access Token，**Bypass 2FA 必须开启**）
+- 包名 `@sidleo3/skill-scan`，在线安装：`dsh plugin --profile <p> add @sidleo3/skill-scan`
