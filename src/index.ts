@@ -12,8 +12,13 @@
 
 import { dirname, join } from 'node:path'
 import { parseDocument } from 'yaml'
-import type { Context } from 'cortex/cordis'
-import type { SkillProvider, SkillProviderControl } from 'cortex/dsh-skill'
+import type { SkillProvider, SkillProviderControl } from '@deepseek-ai/dsh-skill'
+
+/** Minimal host-context shape this plugin reads (fs, skills, dshHomePath, on). */
+export interface ScanContext {
+  get(name: string): unknown
+  on(name: string, listener: (...args: unknown[]) => void): void
+}
 
 export interface ParentDir {
   /** Directory name (e.g. ".dsh") under which "<base>/<name>/skills" is scanned. */
@@ -74,7 +79,7 @@ export const inject = ['skills']
 interface SkillRoot { root: string; rank: number; source: string }
 interface ParsedSkill { name: string; description: string; whenToUse?: string; modelInvocable: boolean; userInvocable: boolean; content: string }
 
-export function apply(ctx: Context, config: SkillScanConfig = DEFAULT_CONFIG): void {
+export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG): void {
   const skills = ctx.get('skills')
   const fs = ctx.get('fs')
   if (skills === undefined) return

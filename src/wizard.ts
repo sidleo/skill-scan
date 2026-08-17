@@ -17,7 +17,10 @@
 
 import { readFile, writeFile } from 'node:fs/promises'
 import { parseDocument } from 'yaml'
-import type { Context } from 'cortex/cordis'
+/** Minimal host-context shape for the wizard (agentPresets only). */
+export interface WizardContext {
+  get(name: string): unknown
+}
 
 interface WizardStatus {
   available: boolean
@@ -28,7 +31,7 @@ interface WizardStatus {
 }
 
 /** Query first-run state for the replacing preset. */
-export async function wizardStatus(ctx: Context): Promise<WizardStatus> {
+export async function wizardStatus(ctx: WizardContext): Promise<WizardStatus> {
   const ap = ctx.get('agentPresets')
   if (ap === undefined) return { available: false }
   const current = await ap.resolve().catch(() => undefined)
@@ -48,7 +51,7 @@ export async function wizardStatus(ctx: Context): Promise<WizardStatus> {
 }
 
 /** Generate the replacing preset (copy + disable skill-filesystem inside). */
-export async function wizardReplace(ctx: Context): Promise<{ ok: boolean; presetId?: string; message?: string; error?: string }> {
+export async function wizardReplace(ctx: WizardContext): Promise<{ ok: boolean; presetId?: string; message?: string; error?: string }> {
   const ap = ctx.get('agentPresets')
   if (ap === undefined) return { ok: false, error: 'agentPresets 服务不可用' }
   const current = await ap.resolve()
@@ -78,7 +81,7 @@ export async function wizardReplace(ctx: Context): Promise<{ ok: boolean; preset
 }
 
 /** Remove the replacing preset, back to coexist / original. */
-export async function wizardRestore(ctx: Context): Promise<{ ok: boolean; message?: string; error?: string }> {
+export async function wizardRestore(ctx: WizardContext): Promise<{ ok: boolean; message?: string; error?: string }> {
   const ap = ctx.get('agentPresets')
   if (ap === undefined) return { ok: false, error: 'agentPresets 服务不可用' }
   await ap.remove('skill-scan').catch(() => {})
