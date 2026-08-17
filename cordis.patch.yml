@@ -2,7 +2,7 @@
 # roster. Applied as a profile bundle layer (the `dsh.bundle.patch` manifest
 # field) over dsh-base; activate with:
 #
-#   dsh plugin --profile <name> add @sidleo/skill-scan
+#   dsh plugin --profile <name> add @sidleo3/skill-scan
 #   # or, from a checkout:
 #   dsh plugin --profile <name> add link:<repo-path>
 #
@@ -12,4 +12,4 @@
 # (exports "./client", served at /plugins/<id>/client.js) load in the web GUI.
 - insert:
     - id: skill-scan
-      name: '@sidleo/skill-scan'
+      name: '@sidleo3/skill-scan'

@@ -25,7 +25,7 @@
 ### 从 npm 在线安装
 
 ```bash
-dsh plugin --profile <profile> add @sidleo/skill-scan
+dsh plugin --profile <profile> add @sidleo3/skill-scan
 ```
 
 `dsh plugin` 会把参数转发给 profile 目录里的 `pnpm`，并自动激活声明了 `dsh.bundle` 的包。装完刷新 Web GUI 即可。

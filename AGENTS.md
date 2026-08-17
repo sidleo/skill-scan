@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-- **包名**：`@sidleo/skill-scan`（v0.1.0，尚未发布 npm）
+- **包名**：`@sidleo3/skill-scan`（v0.1.0，尚未发布 npm）
 - **仓库**：GitHub `sidleo/skill-scan`（分支 `main`）
 - **作用**：以可配置方式发现 `<根>/<上级目录>/skills` 下的技能。四个层级开关（cwd 最高 / 项目或上级遍历（互斥）/ 全局最低） + 用户可编辑上级目录名列表（拖拽排序，靠前优先）。
 - **为什么需要 replace**：DSH 同名技能按 *layer*（层）优先于 *rank* 解析。内置 `skill-filesystem` 若仍挂载在预设层，同名师技能它永远赢——要按 rank 覆盖必须 replace（见 `src/wizard.ts`）。
@@ -19,7 +19,7 @@
 | `src/client/index.ts` | **Client 入口**：`inject=['slots']`；Settings → Plugins → Plugin configuration 卡片（React + `--dsw-alias-*` tokens，chevon 同产品） |
 | `src/wizard.ts` | replace/coexist 安装向导（host-only，尚未被卡片 UI 调用） |
 | `tsdown.config.ts` | 双输出：Host ESM → `lib/index.js`；Client CJS（ModuleLoader 契约）→ `lib/client.js` |
-| `cordis.patch.yml` | `- insert: {id: skill-scan, name:'@sidleo/skill-scan'}` |
+| `cordis.patch.yml` | `- insert: {id: skill-scan, name:'@sidleo3/skill-scan'}` |
 | `skill-scan-blueprint/` | 早期动态插件形态参考副本（不参与构建，非当前代码） |
 | `package.json` | `dsh.bundle.patch` + `dsh.client` 声明；peer deps 指向 `@deepseek-ai/*` rc 版 |
 
@@ -45,7 +45,7 @@ pnpm typecheck    # tsc --noEmit（当前有既有告警，见下方「已知事
 dsh plugin --profile web add link:/Users/zhang3/yh_zhang3/Project/dsh插件/skill-scan
 ```
 
-这会把 `@sidleo/skill-scan` 写进 `~/.dsh/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles`。**两个都要在**，否则插件不会合成加载。
+这会把 `@sidleo3/skill-scan` 写进 `~/.dsh/profiles/web/package.json` 的 `dependencies` + `dsh.profile.bundles`。**两个都要在**，否则插件不会合成加载。
 
 ## 架构要点（改代码前先读）
 
@@ -72,14 +72,14 @@ dsh plugin --profile web add link:/Users/zhang3/yh_zhang3/Project/dsh插件/skil
 
 ## npm 发布（待办，当前不可用）
 
-**现状**：本机未登录 npm（`npm whoami` → `ENEEDAUTH`），`@sidleo/skill-scan` 尚未发布。用户注册 npm 并 `npm login` 前不要尝试 publish。
+**现状**：本机未登录 npm（`npm whoami` → `ENEEDAUTH`），`@sidleo3/skill-scan` 尚未发布。用户注册 npm 并 `npm login` 前不要尝试 publish。
 
 发布步骤（登录后）：
 
 ```bash
 pnpm install && pnpm build
 npm publish    # prepack 自动 pnpm build
-npm view @sidleo/skill-scan   # 验证
+npm view @sidleo3/skill-scan   # 验证
 ```
 
-注意：`@sidleo` scope 必须是 npm 已注册用户名或 org；发布后在线安装命令为 `dsh plugin --profile <p> add @sidleo/skill-scan`。
+注意：`@sidleo` scope 必须是 npm 已注册用户名或 org；发布后在线安装命令为 `dsh plugin --profile <p> add @sidleo3/skill-scan`。

@@ -1,5 +1,5 @@
 /**
- * skill-scan Client — @sidleo/skill-scan
+ * skill-scan Client — @sidleo3/skill-scan
  *
  * DSH client-plugin contract: the bundle is a CommonJS factory registered via
  * `window.__ModuleLoader__.load({ id, factory })`, exporting `apply`/`inject`.
@@ -9,7 +9,7 @@
  *
  * This half drives the Settings → Plugins → Plugin configuration card.
  *
- * @module @sidleo/skill-scan/client
+ * @module @sidleo3/skill-scan/client
  */
 
 import React from 'react'
@@ -65,7 +65,7 @@ export function apply(ctx) {
   if (typeof document !== 'undefined' && document.getElementById('skill-scan-css') === null) {
     const tag = document.createElement('style')
     tag.id = 'skill-scan-css'
-    tag.dataset.plugin = '@sidleo/skill-scan'
+    tag.dataset.plugin = '@sidleo3/skill-scan'
     tag.textContent = CSS
     document.head.appendChild(tag)
   }

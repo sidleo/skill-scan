@@ -1,5 +1,5 @@
 /**
- * skill-scan Host entry — @sidleo/skill-scan
+ * skill-scan Host entry — @sidleo3/skill-scan
  *
  * A configurable skill discovery provider for DeepSeek Harness. Replaces the
  * fixed discovery of `dsh-skill-filesystem` with four toggleable layers and a
@@ -7,7 +7,7 @@
  * is scanned. Provides a browser-facing JSON RPC surface (config get/set,
  * root preview, discovery debug).
  *
- * @module @sidleo/skill-scan
+ * @module @sidleo3/skill-scan
  */
 
 import { dirname, join } from 'node:path'

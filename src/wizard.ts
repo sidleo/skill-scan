@@ -1,5 +1,5 @@
 /**
- * skill-scan install wizard — @sidleo/skill-scan
+ * skill-scan install wizard — @sidleo3/skill-scan
  *
  * First-run choice: REPLACE `dsh-skill-filesystem` or COEXIST.
  *
@@ -12,7 +12,7 @@
  * `node:fs`, `yaml`). The dynamic-plugin sandbox withholds `agentPresets`, so
  * the wizard is host-only.
  *
- * @module @sidleo/skill-scan/wizard
+ * @module @sidleo3/skill-scan/wizard
  */
 
 import { readFile, writeFile } from 'node:fs/promises'

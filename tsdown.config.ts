@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsdown'
 
-const PLUGIN_ID = '@sidleo/skill-scan'
+const PLUGIN_ID = '@sidleo3/skill-scan'
 /** Platform modules resolved from the DSH loader module table (external). */
 const EXTERNALS = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
@@ -12,7 +12,7 @@ const EXTERNALS = [
 ]
 
 /**
- * Build config for @sidleo/skill-scan.
+ * Build config for @sidleo3/skill-scan.
  *
  * Two outputs:
  *  - host   → lib/index.js  (ESM, runs in the DSH host process)

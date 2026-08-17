@@ -1,7 +1,7 @@
 {
-  "name": "@sidleo/skill-scan",
+  "name": "@sidleo3/skill-scan",
   "version": "0.1.0",
-  "description": "Configurable skill discovery provider for DeepSeek Harness (DSH): cwd / project / ancestors / global layers plus editable parent dirs, with an install wizard to replace or coexist with dsh-skill-filesystem. Hot-pluggable — install via `dsh plugin --profile <name> add @sidleo/skill-scan`.",
+  "description": "Configurable skill discovery provider for DeepSeek Harness (DSH): cwd / project / ancestors / global layers plus editable parent dirs, with an install wizard to replace or coexist with dsh-skill-filesystem. Hot-pluggable — install via `dsh plugin --profile <name> add @sidleo3/skill-scan`.",
   "keywords": [
     "deepseek-harness",
     "dsh",

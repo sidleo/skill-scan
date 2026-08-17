@@ -25,7 +25,7 @@ Instead of a hardcoded list of roots, `skill-scan` lets you toggle four scan lay
 ### From npm (online)
 
 ```bash
-dsh plugin --profile <profile> add @sidleo/skill-scan
+dsh plugin --profile <profile> add @sidleo3/skill-scan
 ```
 
 `dsh plugin` forwards its arguments to `pnpm` inside the profile and activates any package declaring `dsh.bundle`. After install, refresh the web GUI.
