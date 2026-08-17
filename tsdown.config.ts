@@ -17,6 +17,10 @@ export default defineConfig({
     'client': 'src/client/index.ts',
   },
   format: ['esm'],
+  outDir: 'lib',
+  outExtension() {
+    return { js: '.js', dts: '.d.ts' }
+  },
   target: 'node22',
   dts: { minify: false },
   sourcemap: true,
