@@ -20,6 +20,12 @@ export interface ScanContext {
   on(name: string, listener: (...args: unknown[]) => void): void
 }
 
+/** Minimal HTTP response used by the webServer JSON routes. */
+export interface JsonRes {
+  writeHead(code: number, headers: Record<string, string>): void
+  end(body?: string): void
+}
+
 export interface ParentDir {
   /** Directory name (e.g. ".dsh") under which "<base>/<name>/skills" is scanned. */
   readonly name: string
@@ -74,7 +80,7 @@ export function normalizeConfig(input: unknown): SkillScanConfig {
 }
 
 export const name = 'skill-scan'
-export const inject = ['skills']
+export const inject = ['skills', 'webServer']
 
 interface SkillRoot { root: string; rank: number; source: string }
 interface ParsedSkill { name: string; description: string; whenToUse?: string; modelInvocable: boolean; userInvocable: boolean; content: string }
@@ -253,16 +259,34 @@ export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG
     control?.invalidate()
   })
 
-  const rpc = ctx.get('harness') as { handle?: (m: string, h: (a: unknown) => unknown) => unknown } | undefined
-  if (rpc?.handle) {
-    rpc.handle('skill-scan/get-config', () => JSON.parse(JSON.stringify(cfg)))
-    rpc.handle('skill-scan/set-config', (args) => { cfg = normalizeConfig(args); control?.invalidate(); return JSON.parse(JSON.stringify(cfg)) })
-    rpc.handle('skill-scan/roots', async () => { const roots = await computeRoots(lastCwd); return { cwd: lastCwd, roots } })
-    rpc.handle('skill-scan/discover', async () => {
-      const roots = await computeRoots(lastCwd)
-      const all = []
-      for (const r of roots) for (const s of await listRoot(r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
-      return { cwd: lastCwd, roots, skills: all }
+  // Browser-facing JSON RPC via webServer (client fetches /api/skill-scan/*).
+  const webServer = ctx.get('webServer') as
+    | { register: (r: { kind: 'exact'; path: string; handler: (req: unknown, res: JsonRes) => void | Promise<void> }) => unknown }
+    | undefined
+  if (webServer) {
+    const json = (res: JsonRes, body: unknown): void => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-scan/config',
+      handler: (_req, res) => json(res, JSON.parse(JSON.stringify(cfg))),
+    })
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-scan/roots',
+      handler: async (_req, res) => { const roots = await computeRoots(lastCwd); json(res, { cwd: lastCwd, roots }) },
+    })
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-scan/discover',
+      handler: async (_req, res) => {
+        const roots = await computeRoots(lastCwd)
+        const all = []
+        for (const r of roots) for (const s of await listRoot(r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
+        json(res, { cwd: lastCwd, roots, skills: all })
+      },
     })
   }
 
