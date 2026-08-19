@@ -197,7 +197,7 @@ export function apply(ctx) {
 
   slots.inject('settings.plugin.item', function () {
     return slots.register(
-      { name: 'settings.plugin.item', id: 'skill-scan', order: 30, label: '技能扫描' },
+      { name: 'settings.plugin.item', id: 'skill-scan', key: 'skill-scan', order: 30, label: '技能扫描' },
       function () { return h(SkillScanCard) })
   })
 }
