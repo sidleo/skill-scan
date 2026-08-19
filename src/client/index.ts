@@ -139,7 +139,11 @@ export function apply(ctx) {
       const next = config.parentDirs.filter(function (_, i) { return i !== index })
       save(Object.assign({}, config, { parentDirs: next }))
     }
-    function addDir() { save(Object.assign({}, config, { parentDirs: config.parentDirs.concat([{ name: '' }]) })) }
+    function addDir() {
+      setError('')
+      setSaved(false)
+      setConfig(Object.assign({}, config, { parentDirs: config.parentDirs.concat([{ name: '' }]) }))
+    }
     function setToggle(key, value) {
       if (key === 'scanProject' && value && config.scanParents) return save(Object.assign({}, config, { scanProject: true, scanParents: false }))
       if (key === 'scanParents' && value && config.scanProject) return save(Object.assign({}, config, { scanParents: true, scanProject: false }))
