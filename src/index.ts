@@ -85,7 +85,7 @@ export function normalizeConfig(input: unknown): SkillScanConfig {
     })
     .filter((pd): pd is ParentDir => {
       if (pd === null) return false
-      return !(pd.name.includes('/') || pd.name.includes('\\') || pd.name === '.' || pd.name === '..')
+      return !(pd.name.includes('/') || pd.name.includes('\\'))
     })
   return {
     scanCwd: src.scanCwd !== false,
