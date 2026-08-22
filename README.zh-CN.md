@@ -1,5 +1,7 @@
 # @sidleo3/skill-filesystem-plus
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 为 [DeepSeek Harness](https://github.com/DeepSeekAI/deepseek-harness)（DSH）提供的**可配置技能发现提供方**，按 preset 选择性接管内置 `dsh-skill-filesystem` 的固定发现逻辑——四层扫描 + 可编辑的上级目录名，**只在用户显式勾选的 preset 中生效**。
 
 > 本项目由 `@sidleo3/skill-scan` 更名而来；GitHub 仓库已改名为 `sidleo/skill-filesystem-plus`。旧配置（`~/.dsh/dsh-skill-scan.json`）会自动迁移。
