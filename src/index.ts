@@ -1,374 +1,275 @@
 /**
- * skill-scan Host entry — @sidleo3/skill-scan
+ * skill-filesystem-plus Host entry — @sidleo3/skill-filesystem-plus
  *
  * A configurable skill discovery provider for DeepSeek Harness. Replaces the
- * fixed discovery of `dsh-skill-filesystem` with four toggleable layers and a
- * user-editable set of "parent dir" names under which `<root>/<name>/skills`
- * is scanned. Provides a browser-facing JSON RPC surface (config get/set,
- * root preview, discovery debug).
+ * fixed discovery of `dsh-skill-filesystem` — but only in presets the USER
+ * explicitly enables. Installation changes nothing: this host entry registers
+ * the settings namespace (which keeps the GUI card visible across DSH
+ * upgrades) and a browser-facing JSON RPC surface (config get/set, roots
+ * preview, discovery debug, preset takeover status and apply/remove). No
+ * preset is copied or modified until the user picks one in the GUI; removing
+ * a preset restores the built-in skill-filesystem row untouched.
  *
- * @module @sidleo3/skill-scan
+ * @module @sidleo3/skill-filesystem-plus
  */
 
-import { dirname, join } from 'node:path'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { parseDocument } from 'yaml'
-import type { SkillProvider, SkillProviderControl } from '@deepseek-ai/dsh-skill'
+import { readFileSync, writeFileSync } from 'node:fs'
+import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import {
+  CONFIG_FILE,
+  DEFAULT_CONFIG,
+  configFilePath,
+  loadConfig,
+  normalizeConfig,
+  persistConfig,
+  type SkillScanConfig,
+} from './config.ts'
+import { computeRoots, listRoot, resolveUserHome, type ProviderFs } from './provider.ts'
+import {
+  applyPreset,
+  listPresets,
+  readTakeoverState,
+  removePreset,
+  type PresetStatus,
+  type TakeoverState,
+} from './wizard.ts'
 
-/** Minimal host-context shape this plugin reads (fs, skills, dshHomePath, on). */
-export interface ScanContext {
-  get(name: string): unknown
-  on(name: string, listener: (...args: unknown[]) => void): void
-}
+export type { SkillScanConfig, ParentDir } from './config.ts'
+export { DEFAULT_CONFIG, normalizeConfig, loadConfig, persistConfig } from './config.ts'
+export { makeSkillProvider, computeRoots, listRoot, decodeSkill } from './provider.ts'
+export { applyPreset, removePreset, listPresets, readTakeoverState, type PresetStatus, type TakeoverState } from './wizard.ts'
 
-/** Minimal HTTP response used by the webServer JSON routes. */
-export interface JsonRes {
-  writeHead(code: number, headers: Record<string, string>): void
-  end(body?: string): void
-}
+export const name = 'skill-filesystem-plus'
+// Hard dependency on the browser HTTP carrier so the GUI config endpoints
+// are registered only after webServer is ready (same pattern as
+// agent-instructions-plus).
+export const inject = ['webServer'] as const
 
-/** Minimal Node writable stream (an HTTP request body). */
-export interface NodeReadable {
-  on(event: 'data', cb: (chunk: Buffer) => void): NodeReadable
-  on(event: 'end', cb: () => void): NodeReadable
-}
-
-/** Collect an HTTP request body as a UTF-8 string. */
-export async function readBodyLight(req: NodeReadable): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => { chunks.push(chunk) })
-    req.on('end', () => { resolve(Buffer.concat(chunks).toString('utf8')) })
-    // no error handler needed for a request body; malformed body → empty/partial
+// ── Settings namespace ─────────────────────────────────────────────
+// Register the namespace our config card edits. DSH's configurable-plugins
+// tab renders only cards whose key is a HOST-served settings namespace;
+// registering here keeps the card visible across DSH upgrades. The settings
+// service is optional and may compose after this host apply, so declare the
+// dependency via inject and register inside its callback.
+function registerSettingsNamespace(ctx: Context, config: SkillScanConfig): void {
+  ctx.inject(['settings'], (settingsCtx) => {
+    const settingsSvc = settingsCtx.get('settings') as
+      | { register(ns: string, schema: unknown): unknown }
+      | undefined
+    if (settingsSvc === undefined) return
+    settingsSvc.register(
+      'skill-filesystem-plus',
+      z.object({
+        scanCwd: z.boolean().default(true),
+        scanProject: z.boolean().default(true),
+        scanParents: z.boolean().default(false),
+        scanGlobal: z.boolean().default(true),
+        parentDirs: z.array(z.object({ name: z.string() })).default([{ name: '.dsh' }, { name: '.agents' }]),
+      }),
+    )
   })
 }
 
-export interface ParentDir {
-  /** Directory name (e.g. ".dsh") under which "<base>/<name>/skills" is scanned. */
-  readonly name: string
-}
+// ── Plugin entry ────────────────────────────────────────────────────
 
-export interface SkillScanConfig {
-  /** Scan the session working directory (highest priority). */
-  readonly scanCwd: boolean
-  /** Scan the nearest `.git`-bearing ancestor (medium, exclusive with scanParents). */
-  readonly scanProject: boolean
-  /** Walk every ancestor from cwd upward (medium, exclusive with scanProject). */
-  readonly scanParents: boolean
-  /** Scan the user home (lowest priority). */
-  readonly scanGlobal: boolean
-  /** Parent dirs; skills live at "<base>/<name>/skills". Index = priority (0 first). */
-  readonly parentDirs: readonly ParentDir[]
-}
-
-export const DEFAULT_CONFIG: SkillScanConfig = {
-  scanCwd: true,
-  scanProject: true,
-  scanParents: false,
-  scanGlobal: true,
-  parentDirs: [{ name: '.dsh' }, { name: '.agents' }],
-}
-
-/** Normalize + validate a config patch; throws on mutual-exclusivity violation. */
-export function normalizeConfig(input: unknown): SkillScanConfig {
-  const src = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  const scanProject = src.scanProject === true
-  const scanParents = src.scanParents === true
-  if (scanProject && scanParents) throw new Error('scanProject 与 scanParents 互斥，只能开启一项')
-  const rawDirs = Array.isArray(src.parentDirs) ? src.parentDirs : DEFAULT_CONFIG.parentDirs
-  const parentDirs = rawDirs
-    .map((pd): ParentDir | null => {
-      if (typeof pd === 'string' && pd.trim().length > 0) return { name: pd.trim() }
-      const rec = pd as { name?: unknown }
-      if (rec && typeof rec.name === 'string' && rec.name.trim().length > 0) return { name: rec.name.trim() }
-      return null
-    })
-    .filter((pd): pd is ParentDir => {
-      if (pd === null) return false
-      return !(pd.name.includes('/') || pd.name.includes('\\'))
-    })
-  return {
-    scanCwd: src.scanCwd !== false,
-    scanProject,
-    scanParents,
-    scanGlobal: src.scanGlobal !== false,
-    parentDirs,
-  }
-}
-
-/**
- * Config-file name stored under the DSH home (e.g. ~/.dsh/dsh-skill-scan.json).
- */
-const CONFIG_FILE = 'dsh-skill-scan.json'
-
-/** Absolute path of the persisted config file, or undefined when no home is reachable. */
-function configFilePath(): string | undefined {
-  try {
-    const home = process.env.DSH_HOME?.trim() || process.env.HOME
-    if (!home) return undefined
-    return join(home, '.dsh', CONFIG_FILE)
-  } catch {
-    return undefined
-  }
-}
-
-/** Load persisted config from disk; falls back to `fallback` when absent or invalid. */
-export function loadConfig(fallback: SkillScanConfig = DEFAULT_CONFIG): SkillScanConfig {
-  const file = configFilePath()
-  if (file === undefined) return fallback
-  try {
-    const raw = readFileSync(file, 'utf8')
-    const parsed = JSON.parse(raw)
-    return normalizeConfig(parsed)
-  } catch {
-    return fallback
-  }
-}
-
-/** Persist config to disk; failures are intentionally non-fatal (in-memory still applies). */
-export function persistConfig(config: SkillScanConfig): void {
-  const file = configFilePath()
-  if (file === undefined) return
-  try {
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify(config, null, 2) + '\n', { encoding: 'utf8' })
-  } catch {
-    // persistence is best-effort — the running process keeps the live config
-  }
-}
-
-export const name = 'skill-scan'
-export const inject = ['skills', 'webServer']
-
-interface SkillRoot { root: string; rank: number; source: string }
-interface ParsedSkill { name: string; description: string; whenToUse?: string; modelInvocable: boolean; userInvocable: boolean; content: string }
-
-export function apply(ctx: ScanContext, config: SkillScanConfig = DEFAULT_CONFIG): void {
-  const skills = ctx.get('skills')
-  const fs = ctx.get('fs')
-  if (skills === undefined) return
-
+export function apply(ctx: Context, config: SkillScanConfig = DEFAULT_CONFIG): void {
+  // Disk config takes precedence over passed-in config.
   let cfg = loadConfig(normalizeConfig(config))
-  let control: SkillProviderControl | undefined
   let lastCwd: string | undefined
 
-  async function pathExists(full: string): Promise<boolean> {
-    if (fs === undefined) return false
-    try { return (await fs.stat(await fs.resolve(full))) !== undefined } catch { return false }
-  }
-  async function projectRootOf(cwd: string): Promise<string> {
-    let current = cwd
-    for (let i = 0; i < 32; i++) {
-      if (await pathExists(join(current, '.git'))) return current
-      const parent = dirname(current)
-      if (parent === current) return cwd
-      current = parent
-    }
-    return cwd
-  }
-  async function resolveHome(): Promise<string | undefined> {
-    try {
-      const hp = ctx.get('dshHomePath')
-      if (typeof hp === 'function') return dirname(String(hp()))
-    } catch { return undefined }
-    return undefined
+  // First-install config seed: write defaults so the GUI toggles match reality.
+  const persisted = loadConfig()
+  if (persisted === undefined) {
+    const seeded = normalizeConfig({ ...DEFAULT_CONFIG })
+    persistConfig(seeded)
+    cfg = seeded
   }
 
-  async function computeRoots(cwd: string | undefined): Promise<SkillRoot[]> {
-    const roots: SkillRoot[] = []
-    const seen = new Set<string>()
-    const pushRoot = (base: string, rankBase: number, source: string): void => {
-      if (!base) return
-      for (let pi = 0; pi < cfg.parentDirs.length; pi++) {
-        const name = cfg.parentDirs[pi].name
-        if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') continue
-        const root = join(base, name, 'skills')
-        if (seen.has(root)) continue
-        seen.add(root)
-        roots.push({ root, rank: rankBase + pi, source })
-      }
-    }
-    if (cfg.scanCwd && cwd) pushRoot(cwd, 100, 'cwd')
-    if (cwd) {
-      if (cfg.scanProject) {
-        pushRoot(await projectRootOf(cwd), 300, 'project')
-      } else if (cfg.scanParents) {
-        let base = dirname(cwd)
-        for (let depth = 0; base && base.length > 1 && depth < 24; depth++) {
-          pushRoot(base, 300 + depth * 10, 'parents')
-          const parent = dirname(base)
-          if (parent === base) break
-          base = parent
-        }
-      }
-    }
-    if (cfg.scanGlobal) {
-      const home = await resolveHome()
-      if (home) pushRoot(home, 500, 'global')
-    }
-    roots.sort((a, b) => a.rank - b.rank)
-    return roots
-  }
+  registerSettingsNamespace(ctx, cfg)
 
-  function frontmatterBoolean(value: unknown): boolean | undefined {
-    if (typeof value === 'boolean') return value
-    if (typeof value === 'string') {
-      switch (value.toLowerCase()) {
-        case 'true': case 'yes': case 'on': case '1': return true
-        case 'false': case 'no': case 'off': case '0': return false
-      }
-    }
-    return undefined
-  }
-  async function decodeSkill(path: string | undefined): Promise<ParsedSkill | undefined> {
-    if (fs === undefined || path === undefined) return undefined
-    let raw: string
-    try { raw = await fs.readText(await fs.resolve(path)) } catch { return undefined }
-    let doc: ReturnType<typeof parseDocument>
-    try { doc = parseDocument(raw) } catch { return undefined }
-    const data = (() => { try { return (doc.toJSON() ?? {}) as Record<string, unknown> } catch { return {} as Record<string, unknown> } })()
-    const n = data.name
-    const desc = data.description
-    const whenToUse = data.whenToUse
-    if (typeof n !== 'string' || typeof desc !== 'string' || n.length === 0 || desc.length === 0) return undefined
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(n)) return undefined
-    const body = raw.split('---', 3).slice(2).join('---').replace(/^\n+/, '')
-    return {
-      name: n,
-      description: desc,
-      ...(typeof whenToUse === 'string' && whenToUse.length > 0 ? { whenToUse } : {}),
-      modelInvocable: frontmatterBoolean(data['disable-model-invocation']) !== true,
-      userInvocable: frontmatterBoolean(data['user-invocable']) !== false,
-      content: body,
-    }
-  }
-  async function listRoot(rootPath: string): Promise<ParsedSkill[]> {
-    const out: ParsedSkill[] = []
-    if (fs === undefined) return out
-    let target
-    try { target = await fs.resolve(rootPath) } catch { return out }
-    if ((await fs.stat(target)) === undefined) return out
-    let entries
-    try { entries = await fs.listDir(target) } catch { return out }
-    for (const entry of entries) {
-      if (entry.type === 'directory') {
-        const s = await decodeSkill(join(entry.target.displayPath, 'SKILL.md'))
-        if (s) out.push(s)
-      } else if (entry.type === 'file' && entry.name.endsWith('.md')) {
-        const s = await decodeSkill(entry.target.displayPath)
-        if (s) out.push(s)
-      }
-    }
-    return out
-  }
-
-  const providerName = 'skill-scan'
-  const provider: SkillProvider = {
-    name: providerName,
-    async list(options) {
-      const cwd = typeof options.cwd === 'string' && options.cwd.length > 0 ? options.cwd : undefined
-      if (cwd) lastCwd = cwd
-      if (options.signal?.aborted) return []
-      const roots = await computeRoots(cwd)
-      const candidates = []
-      for (const r of roots) {
-        if (options.signal?.aborted) return candidates
-        for (const skill of await listRoot(r.root)) {
-          candidates.push({
-            name: skill.name,
-            description: skill.description,
-            ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
-            invocation: { modelInvocable: skill.modelInvocable, userInvocable: skill.userInvocable },
-            provider: providerName,
-            source: r.source,
-            rank: r.rank,
-            locator: { root: r.root },
-            resourceBase: { kind: 'directory', path: r.root },
-            path: r.root,
-          })
-        }
-      }
-      return candidates
-    },
-    async get(candidate) {
-      const loc = candidate.locator as { root?: string }
-      if (!loc || !loc.root) return undefined
-      const skill = await decodeSkill(join(loc.root, 'SKILL.md'))
-      if (!skill) return undefined
-      return {
-        name: skill.name,
-        description: skill.description,
-        ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
-        invocation: { modelInvocable: skill.modelInvocable, userInvocable: skill.userInvocable },
-        source: candidate.source,
-        provider: providerName,
-        resourceBase: { kind: 'directory', path: loc.root },
-        path: loc.root,
-        content: skill.content,
-      }
-    },
-  }
-
-  const unregister = skills.registerProvider((c) => { control = c; return provider })
-
-  ctx.on('fs/observed', (_target, _obs, actor) => {
-    const actorName = actor && typeof actor === 'object' && 'name' in actor ? (actor as { name?: unknown }).name as string | undefined : undefined
-    if (actorName !== 'write' && actorName !== 'edit') return
-    control?.invalidate()
-  })
-
-  // Browser-facing JSON RPC via webServer (client fetches /api/skill-scan/*).
+  // ── HTTP RPC surface ────────────────────────────────────────────
   const webServer = ctx.get('webServer') as
-    | { register: (r: { kind: 'exact'; path: string; handler: (req: unknown, res: JsonRes) => void | Promise<void> }) => unknown }
+    | { register(route: { kind: string; path: string; handler: (req: unknown, res: unknown) => void | Promise<void> }): () => void }
     | undefined
-  if (webServer) {
-    const json = (res: JsonRes, body: unknown): void => {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(body))
-    }
-    const jsonError = (res: JsonRes, message: string): void => {
-      res.writeHead(400, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: message }))
-    }
+
+  /** Drain a JSON request body into a string (lightweight read). */
+  async function readBodyLight(req: { on?: (event: 'data' | 'end' | 'error', cb: (chunk?: Buffer) => void) => void }): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = []
+      req.on?.('data', (chunk) => { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))) })
+      req.on?.('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      req.on?.('error', reject)
+    })
+  }
+
+  function jsonResponse(res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, body: unknown): void {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(body))
+  }
+  function jsonError(res: { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, message: string): void {
+    res.writeHead(400, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: message }))
+  }
+
+  const fs = ctx.get('fs') as ProviderFs | undefined
+  const home = () => resolveUserHome(ctx as unknown as { get(name: string): unknown })
+
+  if (webServer?.register) {
+    // GET/POST /api/skill-filesystem-plus/config — current config / save config
     webServer.register({
       kind: 'exact',
-      path: '/api/skill-scan/config',
+      path: '/api/skill-filesystem-plus/config',
       handler: async (req, res) => {
-        if (req?.method === 'POST') {
+        const method = (req as { method?: string })?.method
+        if (method === 'POST') {
           let parsed: unknown
           try {
-            parsed = JSON.parse(await readBodyLight(req as NodeReadable))
+            parsed = JSON.parse(await readBodyLight(req as { on?: (event: 'data' | 'end' | 'error', cb: (chunk?: Buffer) => void) => void }))
           } catch {
-            return jsonError(res, 'invalid JSON body')
+            return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, 'invalid JSON body')
           }
           try {
             cfg = normalizeConfig(parsed)
-          } catch (error) {
-            return jsonError(res, error instanceof Error ? error.message : String(error))
+          } catch (error: unknown) {
+            return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, error instanceof Error ? error.message : String(error))
           }
           persistConfig(cfg)
-          control?.invalidate()
-          return json(res, { ok: true, config: JSON.parse(JSON.stringify(cfg)) })
+          return jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { ok: true, config: JSON.parse(JSON.stringify(cfg)) })
         }
-        json(res, JSON.parse(JSON.stringify(cfg)))
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, JSON.parse(JSON.stringify(cfg)))
       },
     })
+
+    // GET /api/skill-filesystem-plus/roots — scan root directories for a cwd
     webServer.register({
       kind: 'exact',
-      path: '/api/skill-scan/roots',
-      handler: async (_req, res) => { const roots = await computeRoots(lastCwd); json(res, { cwd: lastCwd, roots }) },
+      path: '/api/skill-filesystem-plus/roots',
+      handler: async (req, res) => {
+        const cwd = resolveCwdFromHttp(req)
+        const roots = await computeRoots(cfg, cwd, { fs, home })
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { cwd, roots })
+      },
     })
+
+    // GET /api/skill-filesystem-plus/discover — scan and list skills
     webServer.register({
       kind: 'exact',
-      path: '/api/skill-scan/discover',
-      handler: async (_req, res) => {
-        const roots = await computeRoots(lastCwd)
+      path: '/api/skill-filesystem-plus/discover',
+      handler: async (req, res) => {
+        const cwd = resolveCwdFromHttp(req)
+        const roots = await computeRoots(cfg, cwd, { fs, home })
         const all = []
-        for (const r of roots) for (const s of await listRoot(r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
-        json(res, { cwd: lastCwd, roots, skills: all })
+        for (const r of roots) for (const s of await listRoot(fs as ProviderFs, r.root)) all.push({ name: s.name, source: r.source, rank: r.rank })
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { cwd, roots, skills: all })
       },
     })
+
+    // ── Preset takeover management ─────────────────────────────────
+    // GET  /api/skill-filesystem-plus/presets          — roster + enabled status
+    // POST /api/skill-filesystem-plus/presets/apply    — enable takeover for one preset
+    // POST /api/skill-filesystem-plus/presets/remove   — disable takeover for one preset
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-filesystem-plus/presets',
+      handler: async (req, res) => {
+        const presets: PresetStatus[] = await listPresets(ctx).catch((error: unknown) => {
+          console.error('[skill-filesystem-plus] listPresets error:', error)
+          return []
+        })
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { presets })
+      },
+    })
+
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-filesystem-plus/presets/apply',
+      handler: async (req, res) => {
+        let parsed: { presetId?: string }
+        try {
+          parsed = JSON.parse(await readBodyLight(req as { on?: (event: 'data' | 'end' | 'error', cb: (chunk?: Buffer) => void) => void })) as { presetId?: string }
+        } catch {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, 'invalid JSON body')
+        }
+        if (typeof parsed?.presetId !== 'string' || parsed.presetId.length === 0) {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, 'presetId 必填')
+        }
+        const result = await applyPreset(ctx, parsed.presetId).catch((error: unknown) => {
+          console.error('[skill-filesystem-plus] applyPreset threw:', error)
+          return { ok: false, error: 'applyPreset 异常: ' + (error instanceof Error ? error.message : String(error)), message: undefined }
+        })
+        if (!result.ok) {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, result.error ?? '启用失败')
+        }
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { ok: true, message: result.message })
+      },
+    })
+
+    webServer.register({
+      kind: 'exact',
+      path: '/api/skill-filesystem-plus/presets/remove',
+      handler: async (req, res) => {
+        let parsed: { presetId?: string }
+        try {
+          parsed = JSON.parse(await readBodyLight(req as { on?: (event: 'data' | 'end' | 'error', cb: (chunk?: Buffer) => void) => void })) as { presetId?: string }
+        } catch {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, 'invalid JSON body')
+        }
+        if (typeof parsed?.presetId !== 'string' || parsed.presetId.length === 0) {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, 'presetId 必填')
+        }
+        const result = await removePreset(ctx, parsed.presetId).catch((error: unknown) => {
+          console.error('[skill-filesystem-plus] removePreset threw:', error)
+          return { ok: false, error: 'removePreset 异常: ' + (error instanceof Error ? error.message : String(error)), message: undefined }
+        })
+        if (!result.ok) {
+          return jsonError(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, result.error ?? '取消失败')
+        }
+        jsonResponse(res as { writeHead: (code: number, headers: Record<string, string>) => void; end: (body: string) => void }, { ok: true, message: result.message })
+      },
+    })
+  } else {
+    console.log('[skill-filesystem-plus] webServer unavailable — GUI config endpoints disabled')
   }
 
-  void unregister
+  /** Resolve cwd from the request query string (?cwd=…), session state, or workspace registry fallback. */
+  function resolveCwdFromHttp(req: unknown): string {
+    const url = (req as { url?: string })?.url
+    if (typeof url === 'string') {
+      const match = /[?&]cwd=([^&]+)/.exec(url)
+      if (match) {
+        try { return decodeURIComponent(match[1]) } catch { /* fall through */ }
+      }
+    }
+    if (lastCwd) return lastCwd
+    try {
+      const registry = (ctx as unknown as Record<string, unknown>)['workspaceRegistry'] as
+        { list?: () => Array<{ path?: string }> } | undefined
+      const workspaces = registry?.list?.()
+      if (Array.isArray(workspaces) && workspaces.length > 0) {
+        const first = workspaces[0]
+        if (first && typeof first.path === 'string' && first.path.length > 0) {
+          lastCwd = first.path
+          return first.path
+        }
+      }
+    } catch { /* registry not available */ }
+    return process.cwd()
+  }
+
+  // ── Track cwd from session events ───────────────────────────────
+  // Cast to the runtime event shape: the `session/event` key is augmented by
+  // dsh-session, which this package does not depend on at type level.
+  (ctx as unknown as { on(name: string, listener: (session: unknown, event: { type?: string }) => void): void }).on('session/event', (_session, event) => {
+    if (event.type === 'step/start') {
+      const session = (_session as { header?: { cwd?: string } })
+      if (session?.header?.cwd) lastCwd = session.header.cwd
+    }
+  })
+
+  // NOTE: no host-plane provider registration. The skill-filesystem-plus provider runs
+  // ONLY inside presets the user explicitly enabled (each copy carries the
+  // /preset row). Installing or upgrading this bundle therefore changes
+  // nothing until the user picks presets in the GUI — and removing a preset
+  // restores the built-in skill-filesystem untouched.
 }

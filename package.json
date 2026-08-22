@@ -1,7 +1,7 @@
 {
-  "name": "@sidleo3/skill-scan",
-  "version": "0.1.3",
-  "description": "Configurable skill discovery provider for DeepSeek Harness (DSH): cwd / project / ancestors / global layers plus editable parent dirs, with an install wizard to replace or coexist with dsh-skill-filesystem. Hot-pluggable — install via `dsh plugin --profile <name> add @sidleo3/skill-scan`.",
+  "name": "@sidleo3/skill-filesystem-plus",
+  "version": "0.1.0",
+  "description": "skill-filesystem-plus: per-preset takeover of dsh-skill-filesystem for DeepSeek Harness (DSH) — editable scan layers and parent dirs. GUI card stays visible across DSH upgrades; only presets the user enables use this provider. Renamed from @sidleo3/skill-scan.",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -22,6 +22,10 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./preset": {
+      "types": "./lib/types/preset.d.ts",
+      "default": "./lib/preset.js"
+    },
     "./client": {
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
@@ -32,8 +36,7 @@
     "lib",
     "src",
     "cordis.patch.yml",
-    "README.md",
-    "README.zh-CN.md"
+    "README.md"
   ],
   "dsh": {
     "bundle": {
@@ -59,6 +62,7 @@
     "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.0",
     "react": "^18.2.0"
   },
   "dependencies": {
@@ -70,6 +74,7 @@
     "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.0",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "react": "^18.3.1",

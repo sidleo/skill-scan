@@ -1,15 +1,15 @@
-# skill-scan bundle patch: inserts the dual-face plugin row into a DSH profile
+# skill-filesystem-plus bundle patch: inserts the dual-face plugin row into a DSH profile
 # roster. Applied as a profile bundle layer (the `dsh.bundle.patch` manifest
 # field) over dsh-base; activate with:
 #
-#   dsh plugin --profile <name> add @sidleo3/skill-scan
+#   dsh plugin --profile <name> add @sidleo3/skill-filesystem-plus
 #   # or, from a checkout:
 #   dsh plugin --profile <name> add link:<repo-path>
 #
 # The row is a bare plugin by package name: the node half (exports ".") runs
-# in the host process (skill-scan provider, install wizard RPC), and the
+# in the host process (skill-filesystem-plus provider, install wizard RPC), and the
 # `dsh.client` declaration in package.json makes the browser half
 # (exports "./client", served at /plugins/<id>/client.js) load in the web GUI.
 - insert:
-    - id: skill-scan
-      name: '@sidleo3/skill-scan'
+    - id: skill-filesystem-plus
+      name: '@sidleo3/skill-filesystem-plus'

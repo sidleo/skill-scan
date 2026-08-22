@@ -1,15 +1,19 @@
+// @ts-nocheck — DSH client-plugin factory is plain JS; tsc strict applies to the host side.
 /**
- * skill-scan Client — @sidleo3/skill-scan
+ * skill-filesystem-plus Client — @sidleo3/skill-filesystem-plus
  *
  * DSH client-plugin contract: the bundle is a CommonJS factory registered via
  * `window.__ModuleLoader__.load({ id, factory })`, exporting `apply`/`inject`.
  * `React` resolves through the loader module table via `require("react")`, and
  * services are consumed through `ctx.get`. RPC to the host goes over
- * `fetch('/api/skill-scan/*')`.
+ * `fetch('/api/skill-filesystem-plus/*')`.
  *
- * This half drives the Settings → Plugins → Plugin configuration card.
+ * This half drives the Settings → Plugins → Plugin configuration card:
+ *  - per-preset takeover: list presets, enable/disable (apply/remove RPC)
+ *  - four-layer scan toggles + parent-dir editor (config RPC)
+ *  - scan-root preview for the current session cwd
  *
- * @module @sidleo3/skill-scan/client
+ * @module @sidleo3/skill-filesystem-plus/client
  */
 
 import React from 'react'
@@ -60,35 +64,49 @@ export function apply(ctx) {
     .skillScanOk { font-size:12.5px; color:var(--dsw-alias-label-primary) }
     .skillScanError { font-size:12.5px; color:var(--dsw-alias-label-error); margin-top:8px }
     .skillScanSection { margin-bottom:14px }
+    .skillScanPresetRow { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--dsw-alias-border-l2) }
+    .skillScanPresetBody { flex:1; min-width:0 }
+    .skillScanPresetName { font-size:13px; font-weight:500; line-height:1.5; color:var(--dsw-alias-label-primary) }
+    .skillScanPresetDesc { font-size:12px; line-height:1.5; color:var(--dsw-alias-label-tertiary); margin-top:2px }
+    .skillScanTag { display:inline-block; font-size:11px; line-height:1; padding:3px 6px; border-radius:999px; margin-top:4px; background:var(--dsw-alias-bg-layer-2); color:var(--dsw-alias-label-secondary) }
+    .skillScanTagOn { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent); color:var(--dsw-alias-brand-primary) }
+    .skillScanTagOff { background:var(--dsw-alias-bg-layer-2); color:var(--dsw-alias-label-tertiary) }
+    .skillScanTagDirty { background:color-mix(in srgb, var(--dsw-alias-label-error) 14%, transparent); color:var(--dsw-alias-label-error) }
+    .skillScanBusy { opacity:.6; pointer-events:none }
   `
   // Inject the stylesheet once per page (idempotent).
-  if (typeof document !== 'undefined' && document.getElementById('skill-scan-css') === null) {
+  if (typeof document !== 'undefined' && document.getElementById('skill-filesystem-plus-css') === null) {
     const tag = document.createElement('style')
-    tag.id = 'skill-scan-css'
-    tag.dataset.plugin = '@sidleo3/skill-scan'
+    tag.id = 'skill-filesystem-plus-css'
+    tag.dataset.plugin = '@sidleo3/skill-filesystem-plus'
     tag.textContent = CSS
     document.head.appendChild(tag)
   }
 
   // Product-identical IconChevronDownOutline14 SVG path.
-  const CHV = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
+  const CHV = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.3623 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
   function Chevron(className) {
     return h('svg', { width: 14, height: 14, viewBox: '0 0 14 14', fill: 'none', xmlns: 'http://www.w3.org/2000/svg', className },
       h('path', { d: CHV, fill: 'currentColor' }))
   }
 
-  function SkillScanCard() {
-    const [open, setOpen] = React.useState(false)
+  function SkillScanCard(props) {
+    const [open, setOpen] = React.useState(!!(props && props.initialOpen))
     const [config, setConfig] = React.useState(null)
+    const [presets, setPresets] = React.useState(null)
     const [preview, setPreview] = React.useState(null)
+    const [busy, setBusy] = React.useState(false)
     const [error, setError] = React.useState('')
     const [saved, setSaved] = React.useState(false)
+    const [presetMsg, setPresetMsg] = React.useState('')
 
     React.useEffect(function () {
       let alive = true
-      fetch('/api/skill-scan/config').then(function (r) { return r.json() })
+      fetch('/api/skill-filesystem-plus/config').then(function (r) { return r.json() })
         .then(function (cfg) { if (alive) setConfig(cfg) }).catch(function () {})
-      fetch('/api/skill-scan/roots').then(function (r) { return r.json() })
+      fetch('/api/skill-filesystem-plus/presets').then(function (r) { return r.json() })
+        .then(function (data) { if (alive) setPresets(data && data.presets ? data.presets : []) }).catch(function () {})
+      fetch('/api/skill-filesystem-plus/roots').then(function (r) { return r.json() })
         .then(function (res) { if (alive) setPreview(res) }).catch(function () {})
       return function () { alive = false }
     }, [])
@@ -97,7 +115,7 @@ export function apply(ctx) {
       setError('')
       setConfig(next)
       setSaved(false)
-      fetch('/api/skill-scan/config', {
+      fetch('/api/skill-filesystem-plus/config', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(next),
@@ -106,8 +124,7 @@ export function apply(ctx) {
           if (result && result.ok) {
             setConfig(result.config)
             setSaved(true)
-            // Refresh the scan-root preview after config applied.
-            return fetch('/api/skill-scan/roots').then(function (r) { return r.json() })
+            return fetch('/api/skill-filesystem-plus/roots').then(function (r) { return r.json() })
           }
           throw new Error((result && result.error) || 'save failed')
         })
@@ -115,12 +132,35 @@ export function apply(ctx) {
         .catch(function (err) { setError(String(err && err.message ? err.message : err)) })
     }
 
+    function togglePreset(presetId, enable) {
+      setBusy(true)
+      setError('')
+      setPresetMsg('')
+      const path = enable ? '/api/skill-filesystem-plus/presets/apply' : '/api/skill-filesystem-plus/presets/remove'
+      fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ presetId: presetId }),
+      }).then(function (r) { return r.json() })
+        .then(function (result) {
+          if (result && result.ok) {
+            setPresetMsg(result.message || (enable ? '已生效' : '已取消'))
+            return fetch('/api/skill-filesystem-plus/presets').then(function (r) { return r.json() })
+          }
+          throw new Error((result && result.error) || '操作失败')
+        })
+        .then(function (data) {
+          if (data) { setPresets(data && data.presets ? data.presets : []); setBusy(false) }
+        })
+        .catch(function (err) { setError(String(err && err.message ? err.message : err)); setBusy(false) })
+    }
+
     if (config === null) {
       return h('li', { className: 'skillScanCard' },
         h('div', { className: 'skillScanHeader' },
           h('span', { className: 'skillScanHeadText' },
             h('span', { className: 'skillScanName' }, '技能扫描'),
-            h('span', { className: 'skillScanDesc' }, '可配置技能发现：cwd/项目/上级遍历/全局 + 自定义上级目录，替代 dsh-skill-filesystem')),
+            h('span', { className: 'skillScanDesc' }, '可配置技能发现：按 preset 接管 + 自定义扫描层级/上级目录')),
           Chevron('skillScanChevron')))
     }
 
@@ -177,17 +217,39 @@ export function apply(ctx) {
         })
       : h('div', { className: 'skillScanHint' }, '暂无根目录')
 
-    return h('li', { className: 'skillScanCard' + (open ? ' skillScanCardOpen' : '') },
+    // ── Preset takeover section ─────────────────────────────────
+    var presetList = (presets || [])
+      .filter(function (p) { return p.hasSkillFilesystem })
+      .map(function (p) {
+        return h('div', { key: p.id, className: 'skillScanPresetRow' },
+          h('input', { type: 'checkbox', className: 'skillScanCheckbox', checked: !!p.enabled, disabled: busy, onChange: function (e) { togglePreset(p.id, e.target.checked) } }),
+          h('div', { className: 'skillScanPresetBody' },
+            h('div', { className: 'skillScanPresetName' }, p.name),
+            h('div', { className: 'skillScanPresetDesc' }, (p.description || '') + (p.id ? '（' + p.id + '）' : '')),
+            h('span', { className: 'skillScanTag ' + (p.enabled ? 'skillScanTagOn' : (p.backupExists ? 'skillScanTagDirty' : 'skillScanTagOff')) },
+              p.enabled ? '● 已接管' : (p.backupExists ? '⚠ 接管不完整（升级可能覆盖了配置，重新勾选修复）' : '○ 内置技能发现'))))
+      })
+    var presetsEmpty = presetList.length === 0
+      ? h('div', { className: 'skillScanHint' }, '未找到含 skill-filesystem 行的预设，或 agentPresets 服务不可用。')
+      : null
+
+    return h('li', { className: 'skillScanCard' + (open ? ' skillScanCardOpen' : '') + (busy ? ' skillScanBusy' : '') },
       h('button', { type: 'button', className: 'skillScanHeader', 'aria-expanded': open ? 'true' : 'false', onClick: function () { setOpen(!open) } },
         h('span', { className: 'skillScanHeadText' },
           h('span', { className: 'skillScanName' }, '技能扫描'),
-          h('span', { className: 'skillScanDesc' }, '可配置技能发现：cwd/项目/上级遍历/全局 + 自定义上级目录，替代 dsh-skill-filesystem')),
+          h('span', { className: 'skillScanDesc' }, '可配置技能发现：按 preset 接管 + 自定义扫描层级/上级目录，替代 dsh-skill-filesystem')),
         Chevron('skillScanChevron' + (open ? ' skillScanChevronOpen' : ''))),
       open ? h('div', { className: 'skillScanBody' },
         h('div', { className: 'skillScanSection' },
+          h('div', { className: 'skillScanSectionTitle' }, '生效的预设（多选，立即生效于新建会话）'),
+          h('div', { className: 'skillScanHint' }, '勾选 = 修改该 preset 配置（禁用其 skill-filesystem 行 + 接入 skill-filesystem-plus 发现）；取消 = 从备份恢复原始配置。升级 DSH 若覆盖配置，重新勾选即可。'),
+          presetsEmpty,
+          presetList,
+          presetMsg ? h('div', { className: 'skillScanOk' }, '✓ ' + presetMsg) : null),
+        h('div', { className: 'skillScanSection' },
           h('div', { className: 'skillScanSectionTitle' }, '扫描层级（开关，优先级从高到低）'),
           rows,
-          saved ? h('div', { className: 'skillScanOk' }, '✓ 已读取配置（编辑持久化在宿主后续版本支持）') : null),
+          saved ? h('div', { className: 'skillScanOk' }, '✓ 配置已保存') : null),
         h('div', { className: 'skillScanSection' },
           h('div', { className: 'skillScanSectionTitle' }, 'skills 的上级目录名（可增删改）'),
           h('div', { className: 'skillScanHint' }, '默认 .dsh、.agents。添加一行即扫 <根>/<名称>/skills。'),
@@ -201,7 +263,7 @@ export function apply(ctx) {
 
   slots.inject('settings.plugin.item', function () {
     return slots.register(
-      { name: 'settings.plugin.item', id: 'skill-scan', key: 'skill-scan', order: 30, label: '技能扫描' },
+      { name: 'settings.plugin.item', id: 'skill-filesystem-plus', key: 'skill-filesystem-plus', order: 30, label: '技能扫描' },
       function () { return h(SkillScanCard) })
   })
 }
